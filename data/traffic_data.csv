@@ -1,0 +1,9 @@
+Date,Time_Slot,Live_Congestion_Level(%),Usual_Congestion_Level(%),Live_Speed_kmph,Delay_Minutes_per_10km,Accident_Risk_Level
+2025-10-27,Morning,57.7,45,15.3,7.5,Medium
+2025-10-27,Afternoon,54.3,50,13.0,8.4,Medium
+2025-10-27,Evening,73.1,65,12.0,12.2,High
+2025-10-27,Night,28.2,25,31.3,1.8,Low
+2025-10-28,Morning,52.2,45,14.9,7.0,Medium
+2025-10-28,Afternoon,62.3,50,14.5,8.6,Medium
+2025-10-28,Evening,64.1,65,8.3,15.4,High
+2025-10-28,Night,19.9,25,27.8,1.4,Low
