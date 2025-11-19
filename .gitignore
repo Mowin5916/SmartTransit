@@ -1,0 +1,44 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environment
+venv/
+env/
+ENV/
+
+# Ignore training scripts (not needed for deployment)
+train_model.py
+train_traffic.py
+train_bus_allocator.py
+generate_synthetic_traffic.py
+
+# Ignore RAG components (unless needed)
+rag_api.py
+rag_ingest.py
+rag_store/
+
+# Ignore notebooks
+*.ipynb
+notebooks/
+
+# Ignore data that is huge or sensitive
+data/*.csv
+data/*.zip
+!data/README.md
+
+# Allow trained models (we keep these)
+!models/
+models/*.tmp
+
+# Ignore OS/system files
+.DS_Store
+Thumbs.db
+
+# Ignore logs
+*.log
+
+# Ignore environment files
+*.env
