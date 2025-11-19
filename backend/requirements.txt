@@ -1,7 +1,8 @@
-Flask 
-gunicorn 
-pandas 
-joblib 
-scikit-learn 
-xgboost 
+Flask
+flask-cors
+gunicorn
+pandas
+joblib
+scikit-learn
+xgboost
 numpy
