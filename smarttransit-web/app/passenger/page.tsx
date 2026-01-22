@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { BANGALORE_ROUTES } from '@/lib/constants';
 import { submitReview, fetchCombinedPrediction } from '@/lib/api';
+import { askTransitAssistant } from '@/lib/gemini';
 
 export default function PassengerPage() {
   const router = useRouter();
@@ -21,7 +22,7 @@ export default function PassengerPage() {
   const [rating, setRating] = useState(5);
   const [reviewText, setReviewText] = useState('');
   const [reviewing, setReviewing] = useState(false);
-  const [greenPoints, setGreenPoints] = useState(150);
+  const [greenPoints, setGreenPoints] = useState(0);
 
   // Voice Assistant State
   const [isListening, setIsListening] = useState(false);
@@ -88,57 +89,65 @@ export default function PassengerPage() {
   };
 
   const processQuery = async (query: string) => {
-      setProcessingVoice(true);
-      const lower = query.toLowerCase();
-      let reply = "I didn't catch that. Try asking about a route like 'R1'.";
+  setProcessingVoice(true);
 
-      const routeMatch = BANGALORE_ROUTES.find(r => 
-          lower.includes(r.id.toLowerCase()) || 
-          lower.includes(r.id.replace('R', 'r ').toLowerCase()) || 
-          lower.includes(r.name.toLowerCase())
-      );
-
-      if (routeMatch) {
-          const currentHour = new Date().getHours();
-          const routeNum = parseInt(routeMatch.id.replace('R', '')) || 22;
-          const destName = routeMatch.name.split('→')[1]?.trim() || 'Destination';
-
-          try {
-              const aiData = await fetchCombinedPrediction({
-                  time_slot: 2,
-                  live_congestion: 50, 
-                  usual_congestion: 45,
-                  route_features: { Route_ID: routeNum, Hour: currentHour, Weather: 1, Holiday: 0 }
-              });
-
-              const eta = Math.ceil(aiData.delay_min_per_10km) + 5;
-              const crowdMsg = aiData.overcrowding_risk === 'High' ? "It is currently crowded." : "Seats are available.";
-              reply = `The next bus for ${routeMatch.id} to ${destName} arrives in ${eta} minutes. ${crowdMsg}`;
-              setSelectedRouteId(routeMatch.id);
-          } catch (error) {
-              reply = `I found route ${routeMatch.id}, but cannot connect to the prediction server.`;
-          }
-      } else if (lower.includes("hello")) {
-          reply = "Hello! I am your Transit Assistant.";
-      }
-
-      setProcessingVoice(false);
-      setAssistantReply(reply);
-      speak(reply);
-  };
+  try {
+    const aiReply = await askTransitAssistant(query);
+    setAssistantReply(aiReply);
+    speak(aiReply);
+  } catch (err) {
+    const fallback = "Sorry, I am having trouble connecting right now.";
+    setAssistantReply(fallback);
+    speak(fallback);
+  } finally {
+    setProcessingVoice(false);
+  }
+};
 
   // --- ACTIONS ---
   const handleImComing = async () => {
-    if (!selectedRouteId || !selectedStop) return;
-    setSignaling(true);
-    const { error } = await supabase.from('passenger_signals').insert({ route_id: selectedRouteId, stop_name: selectedStop });
-    if (error) alert(error.message);
-    else {
-      setLastSignal({ route: activeRoute?.name || selectedRouteId, stop: selectedStop });
-      setSelectedStop('');
-    }
+  if (!selectedRouteId || !selectedStop || !profile) return;
+
+  setSignaling(true);
+
+  // 1️⃣ Insert passenger signal
+  const { error: signalError } = await supabase
+    .from('passenger_signals')
+    .insert({
+      route_id: selectedRouteId,
+      stop_name: selectedStop
+    });
+
+  if (signalError) {
+    alert(signalError.message);
     setSignaling(false);
-  };
+    return;
+  }
+
+  // 2️⃣ Update eco points (+10)
+  const newPoints = greenPoints + 10;
+
+  const { error: ecoError } = await supabase
+    .from('profiles')
+    .update({ eco_points: newPoints })
+    .eq('id', profile.id);
+
+  if (ecoError) {
+    console.error('Eco update failed:', ecoError);
+  } else {
+    setGreenPoints(newPoints);
+  }
+
+  // 3️⃣ UI feedback
+  setLastSignal({
+    route: activeRoute?.name || selectedRouteId,
+    stop: selectedStop
+  });
+
+  setSelectedStop('');
+  setSignaling(false);
+};
+
 
   const handleReview = async () => {
     if (!selectedRouteId) return alert("Select a route first");
@@ -156,6 +165,16 @@ export default function PassengerPage() {
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden bg-[#050508] text-white font-sans selection:bg-indigo-500/30 pb-12">
+        {/* BACKGROUND */}
+    <div className="fixed inset-0 z-0">
+      <img
+        src="/bg.jpg"
+        alt="SmartTransit Background"
+        className="w-full h-full object-cover brightness-90"
+      />
+      <div className="absolute inset-0 bg-black/35" />
+    </div>
+
       
       {/* --- BACKGROUND ANIMATION LAYER --- */}
       <div className="absolute inset-0 z-0 fixed">
@@ -247,26 +266,48 @@ export default function PassengerPage() {
             </div>
 
             {/* 2. GREEN POINTS (Small Card) */}
-            <div className="col-span-1 bg-gradient-to-b from-emerald-900/40 to-black/60 backdrop-blur-md border border-emerald-500/20 rounded-3xl p-6 relative overflow-hidden group hover:border-emerald-500/40 transition-all">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl -mr-8 -mt-8"></div>
-                
-                <div className="relative z-10 h-full flex flex-col justify-between">
-                    <div className="flex justify-between items-start">
-                        <span className="text-emerald-400 text-[10px] font-bold uppercase tracking-widest border border-emerald-500/20 px-2 py-1 rounded bg-emerald-900/20">Eco Impact</span>
-                        <span className="text-2xl drop-shadow-lg">🌱</span>
-                    </div>
-                    <div>
-                        <div className="flex items-baseline gap-1 mt-4">
-                            <span className="text-5xl font-bold tracking-tighter text-white drop-shadow-[0_0_15px_rgba(16,185,129,0.3)]">{greenPoints}</span>
-                            <span className="text-sm font-medium text-emerald-400/80">pts</span>
-                        </div>
-                        <div className="mt-4 bg-zinc-800/50 h-2 rounded-full overflow-hidden border border-white/5">
-                            <div className="bg-gradient-to-r from-emerald-600 to-emerald-400 h-full w-[70%] shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
-                        </div>
-                        <p className="text-[10px] text-zinc-400 mt-2 text-right font-mono">NEXT REWARD: FREE RIDE (250 PTS)</p>
-                    </div>
-                </div>
-            </div>
+            {/* ECO IMPACT CARD */}
+<div className="col-span-1 bg-gradient-to-b from-emerald-900/40 to-black/60 backdrop-blur-md border border-emerald-500/20 rounded-3xl p-6 relative overflow-hidden transition-all">
+
+  {/* Badge */}
+  <div className="absolute top-4 left-4 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-emerald-900/40 border border-emerald-500/30 text-emerald-400">
+    Eco Impact
+  </div>
+
+  {/* Icon */}
+  <div className="absolute top-4 right-4 text-2xl">
+    🌱
+  </div>
+
+  {/* Content */}
+  <div className="flex flex-col justify-center h-full pt-10">
+    
+    {/* Points */}
+    <div className="flex items-end gap-2">
+      <span className="text-5xl font-black tracking-tight text-white">
+        {greenPoints}
+      </span>
+      <span className="text-sm font-bold text-emerald-400 pb-1">
+        pts
+      </span>
+    </div>
+
+    {/* Progress Bar */}
+    <div className="mt-4 w-full bg-zinc-800/60 rounded-full h-2 overflow-hidden border border-white/5">
+      <div
+        className="bg-gradient-to-r from-emerald-500 to-emerald-400 h-full transition-all duration-500"
+        style={{ width: `${Math.min((greenPoints / 250) * 100, 100)}%` }}
+      />
+    </div>
+
+    {/* Label */}
+    <div className="mt-3 text-[10px] text-zinc-400 font-mono text-right">
+      NEXT REWARD: FREE RIDE (250 ECO PTS)
+    </div>
+
+  </div>
+</div>
+
 
             {/* 3. MANUAL SIGNAL (The Control Panel) */}
             <div className="col-span-1 md:col-span-2 lg:col-span-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-3xl p-8 shadow-2xl">

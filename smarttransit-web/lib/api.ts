@@ -184,20 +184,39 @@ export async function getAssignments() {
 export async function getAssignmentForUser(userId: string) {
   if (!userId) return null;
 
-  const { data, error } = await supabase
-    .from('assignments')
-    .select('*')
-    .or(`driver_id.eq.${userId},conductor_id.eq.${userId}`)
-    .limit(1)
-    .maybeSingle();
+  // 🔹 1. Check conductor assignment FIRST
+  const { data: conductorAssignment, error: conductorError } =
+    await supabase
+      .from('assignments')
+      .select('*')
+      .eq('conductor_id', userId)
+      .maybeSingle();
 
-  if (error) {
-    console.warn('getAssignmentForUser supabase error', error);
-    throw error;
+  if (conductorError) {
+    console.error('Conductor assignment error:', conductorError);
+    throw conductorError;
   }
 
-  return data ?? null;
+  if (conductorAssignment) {
+    return conductorAssignment;
+  }
+
+  // 🔹 2. Fallback to driver assignment
+  const { data: driverAssignment, error: driverError } =
+    await supabase
+      .from('assignments')
+      .select('*')
+      .eq('driver_id', userId)
+      .maybeSingle();
+
+  if (driverError) {
+    console.error('Driver assignment error:', driverError);
+    throw driverError;
+  }
+
+  return driverAssignment ?? null;
 }
+
 
 /**
  * assignStaffToRoute
@@ -205,32 +224,38 @@ export async function getAssignmentForUser(userId: string) {
  */
 export async function assignStaffToRoute(
   routeId: string,
-  driverId: string | null,
-  conductorId: string | null
+  driverId?: string | null,
+  conductorId?: string | null
 ) {
-  if (!routeId) throw new Error('routeId is required for assignment');
+  if (!routeId) throw new Error('routeId is required');
 
-  // Verify Session
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('You must be logged in to assign staff.');
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
+  if (!session) throw new Error('You must be logged in');
+
+  // 🔒 SAFE payload: do NOT overwrite unless explicitly passed
   const payload: any = {
     route_id: routeId,
-    driver_id: driverId,
-    conductor_id: conductorId,
     active: true,
     updated_at: new Date().toISOString(),
   };
 
+  if (driverId !== undefined) payload.driver_id = driverId;
+  if (conductorId !== undefined) payload.conductor_id = conductorId;
+
   const { data, error } = await supabase
     .from('assignments')
     .upsert(payload, { onConflict: 'route_id' })
-    .select('*');
+    .select('*')
+    .single();
 
   if (error) {
-    console.error('assignStaffToRoute error', error);
+    console.error('assignStaffToRoute error:', error);
     throw error;
   }
+
   return data;
 }
 

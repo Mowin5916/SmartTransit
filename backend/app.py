@@ -1,167 +1,156 @@
-# app.py
-"""
-SmartTransit main Flask backend (updated).
-- Serves a health root endpoint
-- /predict : returns demand prediction (uses local joblib model + reference CSV)
-- /api/ask_ai : proxy to RAG service (http://localhost:8001/chat by default)
-Configuration via environment variables:
-- MODEL_PATH (default: models/passenger_xgb.pkl)
-- DATA_PATH  (default: data/merged_encoded.csv)
-- RAG_URL    (default: http://localhost:8001/chat)
-"""
-import os
-import logging
 from flask import Flask, request, jsonify
-import pandas as pd
-import joblib
-import requests
-from requests.exceptions import RequestException
 from flask_cors import CORS
+import os
+import joblib
+import numpy as np
 
-# --- Configuration ---
-MODEL_PATH = os.environ.get("MODEL_PATH", os.path.join("models", "passenger_xgb.pkl"))
-DATA_PATH = os.environ.get("DATA_PATH", os.path.join("data", "merged_encoded.csv"))
-RAG_URL = os.environ.get("RAG_URL", "http://localhost:8001/chat")
-API_TIMEOUT = int(os.environ.get("API_TIMEOUT", "10"))  # seconds for external calls
-
-# --- App setup ---
+# --------------------------------
+# App setup
+# --------------------------------
 app = Flask(__name__)
-CORS(app)  # allow cross-origin requests while developing (adjust for production)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("smarttransit")
+CORS(app)
 
-# --- Load model and reference data (graceful) ---
-model = None
-ref_data = None
-X_COLUMNS = []
+# --------------------------------
+# Model loading
+# --------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
 
-def safe_load_model_and_data():
-    global model, ref_data, X_COLUMNS
-    try:
-        if os.path.exists(MODEL_PATH):
-            model = joblib.load(MODEL_PATH)
-            logger.info(f"✅ Model loaded from {MODEL_PATH}")
-        else:
-            logger.warning(f"Model file not found at {MODEL_PATH}")
+traffic_bundle_path = os.path.join(MODELS_DIR, "traffic_models.pkl")
 
-        if os.path.exists(DATA_PATH):
-            ref_data = pd.read_csv(DATA_PATH, low_memory=False)
-            logger.info(f"✅ Reference data loaded from {DATA_PATH} (shape={ref_data.shape})")
-            # derive feature columns (exclude obvious target/date columns)
-            X_COLUMNS = [c for c in ref_data.columns if c.lower() not in ("date", "passenger_count", "passengers", "target")]
-            logger.info(f"Feature columns derived: {len(X_COLUMNS)} columns")
-        else:
-            logger.warning(f"Reference CSV not found at {DATA_PATH}")
-    except Exception as e:
-        logger.exception("Failed to load model or reference data: %s", e)
+if not os.path.exists(traffic_bundle_path):
+    raise FileNotFoundError("traffic_models.pkl not found")
 
-safe_load_model_and_data()
+traffic_bundle = joblib.load(traffic_bundle_path)
 
-# --- Root / health check ---
-@app.route("/", methods=["GET"])
+speed_model = traffic_bundle["speed_model"]
+delay_model = traffic_bundle["delay_model"]
+slot_encoder = traffic_bundle["slot_encoder"]
+risk_clf = traffic_bundle.get("risk_clf")
+
+# --------------------------------
+# Passenger demand logic
+# --------------------------------
+ROUTE_BASE_LOAD = {
+    1: 30, 2: 55, 3: 75, 4: 60, 5: 105,
+    6: 65, 7: 70, 8: 80, 9: 90, 10: 100,
+}
+
+def hour_factor(hour):
+    if 8 <= hour <= 10: return 1.2
+    if 17 <= hour <= 20: return 1.3
+    if 5 <= hour <= 7: return 0.7
+    return 1.0
+
+def compute_passenger_demand(route_id, hour, weather, holiday):
+    base = ROUTE_BASE_LOAD.get(route_id, 60)
+    demand = base * hour_factor(hour)
+    if weather == 1: demand *= 1.15
+    if holiday == 1: demand *= 0.85
+    return max(0, int(round(demand)))
+
+# --------------------------------
+# Health check
+# --------------------------------
+@app.route("/")
 def home():
-    status = {
-        "message": "🚌 SmartTransit API is running",
-        "model_loaded": bool(model),
-        "ref_data_loaded": bool(ref_data),
-        "rag_available_at": RAG_URL
-    }
-    return jsonify(status)
+    return jsonify({"status": "SmartTransit backend running"})
 
-# --- Predict route (GET) ---
-@app.route("/predict", methods=["GET"])
-def predict():
-    if model is None or ref_data is None:
-        return jsonify({"error": "Model or reference data not loaded on server. Check server logs."}), 500
+# --------------------------------
+# Combined prediction endpoint
+# --------------------------------
+@app.route("/predict/all", methods=["POST"])
+def predict_all():
+    data = request.get_json()
 
-    try:
-        # read inputs (fallback defaults if missing)
-        route = request.args.get("route_id") or request.args.get("route") or 0
-        time_slot = request.args.get("time_slot") or request.args.get("time") or 0
-        weather = request.args.get("weather") or 0
-        live_cong = request.args.get("live_congestion") or request.args.get("live_cong") or 70
-        delay = request.args.get("delay_minutes") or request.args.get("delay") or 10
-        live_speed = request.args.get("live_speed") or request.args.get("live_speed_kmph") or 15.5
+    time_slot = int(data["time_slot"])
+    live_cong = float(data["live_congestion"])
+    usual_cong = float(data["usual_congestion"])
 
-        # safe casting
-        route = int(float(route))
-        time_slot = int(float(time_slot))
-        weather = int(float(weather))
-        live_cong = float(live_cong)
-        delay = float(delay)
-        live_speed = float(live_speed)
+    slot_enc = slot_encoder.transform([str(time_slot)])[0]
+    X = np.array([[slot_enc, live_cong, usual_cong]])
 
-        # Build base sample using the derived X_COLUMNS
-        sample = {}
-        # Try to match common column names; if a name exists in X_COLUMNS, set it appropriately
-        # This keeps the model input aligned with training schema
-        for col in X_COLUMNS:
-            lc = col.lower()
-            if "route" in lc and "id" in lc:
-                sample[col] = route
-            elif "time" in lc and ("slot" in lc or "hour" in lc):
-                sample[col] = time_slot
-            elif "weather" in lc:
-                sample[col] = weather
-            elif "congest" in lc or "live_congestion" in lc:
-                sample[col] = live_cong
-            elif "delay" in lc:
-                sample[col] = delay
-            elif "speed" in lc:
-                sample[col] = live_speed
-            else:
-                # default zero for other features
-                sample[col] = 0
+    speed = float(speed_model.predict(X)[0])
+    delay = float(delay_model.predict(X)[0])
 
-        df_sample = pd.DataFrame([sample], columns=X_COLUMNS)
+    route_features = data["route_features"]
+    route_id = int(route_features["Route_ID"])
+    hour = int(route_features["Hour"])
+    weather = int(route_features.get("Weather", 0))
+    holiday = int(route_features.get("Holiday", 0))
 
-        # Predict
-        pred = model.predict(df_sample)[0]
-        pred_val = float(pred)
+    passengers = compute_passenger_demand(route_id, hour, weather, holiday)
 
-        traffic_flag = "⚠️ Heavy traffic" if (live_cong > 75 or delay > 12) else "✅ Normal flow"
+    BUS_CAPACITY = 40
+    recommended_buses = max(1, int(np.ceil(passengers / (BUS_CAPACITY * 0.8))))
 
-        return jsonify({
-            "predicted_passengers": round(pred_val, 2),
-            "traffic_status": traffic_flag,
-            "used_features_count": len(X_COLUMNS)
-        })
+    overcrowding_risk = (
+        "High" if passengers > recommended_buses * BUS_CAPACITY
+        else "Medium" if passengers > recommended_buses * BUS_CAPACITY * 0.9
+        else "Low"
+    )
 
-    except Exception as e:
-        logger.exception("Prediction failed: %s", e)
-        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "predicted_passengers": passengers,
+        "recommended_buses": recommended_buses,
+        "overcrowding_risk": overcrowding_risk,
+        "speed_kmph": round(speed, 2),
+        "delay_min_per_10km": round(delay, 2),
+    })
 
-# --- Copilot proxy route to RAG server (POST) ---
-@app.route("/api/ask_ai", methods=["POST"])
-def ask_ai():
-    """
-    Expects JSON body: { "query": "...", "top_k": 3 }
-    Forwards to the configured RAG server and returns the response.
-    """
-    try:
-        payload = request.get_json(force=True)
-        if not payload or "query" not in payload:
-            return jsonify({"error": "Missing 'query' in request body."}), 400
+# --------------------------------
+# 🚨 Arduino passenger counter endpoint
+# --------------------------------
+PASSENGER_COUNT = {}
 
-        top_k = int(payload.get("top_k", 5))
-        # build request for rag server
-        rag_req = {"query": payload["query"], "top_k": top_k}
-        try:
-            resp = requests.post(RAG_URL, json=rag_req, timeout=API_TIMEOUT)
-            resp.raise_for_status()
-        except RequestException as re:
-            logger.exception("Error contacting RAG server at %s : %s", RAG_URL, re)
-            return jsonify({"error": "RAG server unreachable", "details": str(re)}), 502
+from supabase import create_client, Client
 
-        # forward rag response as-is
-        return jsonify(resp.json())
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
-    except Exception as e:
-        logger.exception("ask_ai failed: %s", e)
-        return jsonify({"error": str(e)}), 500
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Supabase environment variables not set")
 
-# --- Run application ---
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+@app.route("/sensor/update", methods=["POST"])
+def sensor_update():
+    data = request.get_json()
+    bus_id = data.get("bus_id")
+    delta = int(data.get("delta", 0))
+
+    if not bus_id:
+        return jsonify({"error": "bus_id required"}), 400
+
+    print(f"[SENSOR] bus_id={bus_id}, delta={delta}")
+
+    # 1️⃣ Fetch current occupancy
+    res = supabase.table("buses") \
+        .select("current_occupancy") \
+        .eq("id", bus_id) \
+        .single() \
+        .execute()
+
+    if not res.data:
+        return jsonify({"error": "Bus not found"}), 404
+
+    current = res.data["current_occupancy"] or 0
+    new_value = max(0, current + delta)
+
+    # 2️⃣ Update occupancy
+    update_res = supabase.table("buses") \
+        .update({"current_occupancy": new_value}) \
+        .eq("id", bus_id) \
+        .execute()
+
+    print(f"[SENSOR] Updated occupancy → {new_value}")
+
+    return jsonify({
+        "bus_id": bus_id,
+        "count": new_value
+    })
+
 if __name__ == "__main__":
-    # Use host 0.0.0.0 so render/container bindings work if you run directly
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    print("🚀 SmartTransit backend starting...")
+    app.run(host="0.0.0.0", port=5000, debug=True)

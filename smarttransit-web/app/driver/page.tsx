@@ -94,10 +94,23 @@ export default function DriverPage() {
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500">Loading...</div>;
 
   return (
-  <div className="min-h-screen bg-[#0a0a0f] text-white p-4 md:p-6 font-sans">
+  <div className="relative min-h-screen text-white p-4 md:p-6 font-sans">
 
-    {/* HEADER */}
-    <header className="max-w-4xl mx-auto bg-zinc-900/80 backdrop-blur p-4 rounded-2xl border border-white/10 mb-6 shadow-2xl flex justify-between items-center">
+    {/* BACKGROUND LAYER */}
+    <div className="fixed inset-0 z-0">
+      <img
+        src="/bg1.jpg"
+        alt="SmartTransit Background"
+        className="w-full h-full object-cover brightness-90"
+      />
+      <div className="absolute inset-0 bg-black/35" />
+    </div>
+
+    {/* EVERYTHING VISIBLE GOES INSIDE THIS WRAPPER */}
+     <div className="relative z-10 max-w-4xl mx-auto">
+
+      {/* HEADER */}
+      <header className="bg-zinc-900/90 backdrop-blur p-4 rounded-2xl border border-white/10 mb-6 shadow-2xl flex justify-between items-center">
       <div className="flex items-center gap-4">
         <div className="h-12 w-12 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/30">
           {profile?.full_name ? profile.full_name[0].toUpperCase() : 'D'}
@@ -125,7 +138,7 @@ export default function DriverPage() {
       {/* LEFT COLUMN */}
       <div className="lg:col-span-2 space-y-6">
 
-        <div className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-indigo-500/20 relative overflow-hidden">
+        <div className="bg-zinc-950/90 p-6 rounded-2xl shadow-xl border border-indigo-500/20 relative overflow-hidden">
           <div className="relative z-10">
             <h2 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4">
               Current Route Assignment
@@ -179,11 +192,12 @@ export default function DriverPage() {
           </div>
         </div>
 
-        {route && route.stops && (
-          <div className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-white/10">
+        {route && Array.isArray(route.stops) && route.stops.length > 0 && (
+          <div className="bg-zinc-950/90 p-6 rounded-2xl shadow-xl border border-white/10">
             <h3 className="text-lg font-bold text-white mb-4">
               Stops Sequence
             </h3>
+
             <div className="flex flex-wrap gap-2">
               {Array.isArray(route?.stops) ? route.stops.map((stop: any, i: number) => (
                 <div
@@ -204,7 +218,7 @@ export default function DriverPage() {
       {/* RIGHT COLUMN */}
       <div className="space-y-6">
 
-        <div className="bg-zinc-900/70 p-5 rounded-2xl shadow-xl border border-white/10">
+        <div className="bg-zinc-950/90 p-5 rounded-2xl shadow-xl border border-white/10">
           <h3 className="font-bold text-white mb-4">My Stats</h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-indigo-900/20 p-3 rounded-xl text-center border border-indigo-500/20">
@@ -226,7 +240,7 @@ export default function DriverPage() {
           </div>
         </div>
 
-        <div className="bg-zinc-900/70 p-5 rounded-2xl shadow-xl border border-white/10">
+        <div className="bg-zinc-950/90 p-5 rounded-2xl shadow-xl border border-white/10">
           <h3 className="font-bold text-white mb-4">
             Previous Assignments
           </h3>
@@ -256,6 +270,7 @@ export default function DriverPage() {
 
       </div>
     </main>
+  </div>
   </div>
 );
 }

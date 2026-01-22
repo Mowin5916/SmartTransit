@@ -159,17 +159,39 @@ export default function PlannerPage() {
   }
 
   async function handleAssign() {
-    if (!selectedRouteId) return;
-    setAssigning(true);
-    try {
-      await assignStaffToRoute(selectedRouteId, selectedDriver || null, selectedConductor || null);
-      const a = await getAssignments();
-      setAssignments(a || []);
-      addLog('ASSIGNMENT', `Updated roster for ${selectedRouteId}`);
-      alert('Staff Allocation Updated');
-    } catch (e: any) { alert(e.message); }
-    finally { setAssigning(false); }
+  if (!selectedRouteId) return;
+
+  const currentAssignment = assignments.find(
+    a => a.route_id === selectedRouteId
+  );
+
+  setAssigning(true);
+
+  try {
+    console.log('ASSIGN PAYLOAD', {
+      route: selectedRouteId,
+      driver: selectedDriver || currentAssignment?.driver_id || null,
+      conductor: selectedConductor || currentAssignment?.conductor_id || null,
+    });
+
+    await assignStaffToRoute(
+      selectedRouteId,
+      selectedDriver || currentAssignment?.driver_id || null,
+      selectedConductor || currentAssignment?.conductor_id || null
+    );
+
+    const updatedAssignments = await getAssignments();
+    setAssignments(updatedAssignments || []);
+
+    addLog('ASSIGNMENT', `Updated roster for ${selectedRouteId}`);
+    alert('Staff Allocation Updated');
+  } catch (e: any) {
+    alert(e.message || 'Failed to assign staff');
+  } finally {
+    setAssigning(false);
   }
+}
+
 
   const activeRoute = BANGALORE_ROUTES.find(r => r.id === selectedRouteId);
   const recBuses = predOutput?.recommended_buses || 1;
@@ -184,33 +206,70 @@ export default function PlannerPage() {
      return !assignedTo || assignedTo.route_id === selectedRouteId;
   });
 
-  return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white p-4 md:p-6 font-sans">
-      
-      <header className="flex justify-between items-center bg-zinc-900/80 backdrop-blur p-4 rounded-xl border border-white/10 mb-6 shadow-2xl">
-         <div className="flex items-center gap-4">
-            <div className="h-10 w-10 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20">ST</div>
-            <div>
-               <h1 className="text-xl font-bold tracking-tight">SmartTransit++ <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/30">ENTERPRISE</span></h1>
-               <p className="text-zinc-500 text-xs">Bengaluru Command Center • Live</p>
+ return (
+  <div className="relative min-h-screen text-white p-4 md:p-6 font-sans">
+    {/* BACKGROUND */}
+    <div className="fixed inset-0 z-0">
+      <img
+        src="/bg.jpg"
+        alt="SmartTransit Background"
+        className="w-full h-full object-cover brightness-90"
+      />
+      <div className="absolute inset-0 bg-black/35" />
+    </div>
+    
+    {/* --- BACKGROUND ANIMATION LAYER --- */}
+      <div className="absolute inset-0 z-0 fixed">
+          <div className="absolute top-[-50%] left-[-50%] w-[200%] h-[200%] animate-gradient opacity-30 bg-gradient-to-br from-indigo-900/40 via-purple-900/10 to-emerald-900/20 blur-3xl"></div>
+          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150"></div>
+      </div>
+
+    {/* EVERYTHING ELSE MUST LIVE INSIDE THIS */}
+    <div className="relative z-10">
+
+      <header className="flex justify-between items-center bg-zinc-900/90 backdrop-blur p-4 rounded-xl border border-white/10 mb-6 shadow-2xl">
+        <div className="flex items-center gap-4">
+          <div className="h-10 w-10 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20">
+            ST
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">
+              SmartTransit++{" "}
+              <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/30">
+                ENTERPRISE
+              </span>
+            </h1>
+            <p className="text-zinc-500 text-xs">
+              Bengaluru Command Center • Live
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <div className="text-right hidden md:block">
+            <div className="text-2xl font-bold text-emerald-400 font-mono">
+              {Object.values(routeSignals).reduce((a, b) => a + b, 0)}
             </div>
-         </div>
-         <div className="flex items-center gap-6">
-             <div className="text-right hidden md:block">
-                 <div className="text-2xl font-bold text-emerald-400 font-mono">{Object.values(routeSignals).reduce((a,b)=>a+b,0)}</div>
-                 <div className="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">Live Signals</div>
-             </div>
-             <button onClick={handleLogout} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-xs font-bold border border-red-500/20 transition-all flex items-center gap-2">
-                LOGOUT
-             </button>
-         </div>
+            <div className="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">
+              Live Signals
+            </div>
+          </div>
+
+          <button
+            onClick={handleLogout}
+            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-xs font-bold border border-red-500/20 transition-all flex items-center gap-2"
+          >
+            LOGOUT
+          </button>
+        </div>
       </header>
+
 
       <div className="grid grid-cols-1 2xl:grid-cols-4 gap-6">
         
         {/* COL 1: ROUTE & FEEDS */}
         <div className="space-y-6">
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl overflow-hidden flex flex-col max-h-[400px]">
+            <div className="bg-zinc-900/90 border border-white/5 rounded-xl overflow-hidden flex flex-col max-h-[400px]">
                 <div className="p-3 bg-white/5 font-bold text-zinc-300 text-sm border-b border-white/10 flex justify-between">
                     <span>Routes</span>
                     <span className="text-indigo-400">{BANGALORE_ROUTES.length}</span>
@@ -222,7 +281,14 @@ export default function PlannerPage() {
                         return (
                             <div 
                                 key={route.id}
-                                onClick={() => { setSelectedRouteId(route.id); setPredOutput(null); }}
+                                onClick={() => {
+                                setSelectedRouteId(route.id);
+                                setPredOutput(null);
+
+                                const a = assignments.find(x => x.route_id === route.id);
+                                 setSelectedDriver(a?.driver_id || '');
+                                setSelectedConductor(a?.conductor_id || '');
+                            }}
                                 className={`p-3 rounded-lg cursor-pointer transition-all border border-transparent group hover:bg-white/5 ${isSelected ? 'bg-indigo-600/20 !border-indigo-500/50' : ''}`}
                             >
                                 <div className="flex justify-between items-center">
@@ -237,7 +303,7 @@ export default function PlannerPage() {
             </div>
 
             {/* ALERTS */}
-            <div className="bg-red-900/10 border border-red-500/20 rounded-xl p-4 max-h-[200px] overflow-y-auto custom-scrollbar">
+            <div className="bg-red-900/40 border border-red-500/20 rounded-xl p-4 max-h-[200px] overflow-y-auto custom-scrollbar">
                 <h3 className="text-red-400 font-bold text-xs uppercase tracking-widest mb-3 flex items-center gap-2 sticky top-0 bg-[#1a0505] p-1 z-10">
                    <span className="h-2 w-2 bg-red-500 rounded-full animate-ping"></span> Incident Feed
                 </h3>
@@ -256,7 +322,7 @@ export default function PlannerPage() {
             </div>
 
             {/* REVIEWS */}
-            <div className="bg-indigo-900/10 border border-indigo-500/20 rounded-xl p-4 max-h-[250px] overflow-y-auto custom-scrollbar flex flex-col">
+            <div className="bg-indigo-900/40 border border-indigo-500/20 rounded-xl p-4 max-h-[250px] overflow-y-auto custom-scrollbar flex flex-col">
                 <h3 className="text-indigo-400 font-bold text-xs uppercase tracking-widest mb-3 sticky top-0 bg-[#0a0a15] p-1 z-10">Passenger Insights</h3>
                 <div className="space-y-2 flex-1">
                    {reviews.length === 0 && <div className="text-zinc-600 text-xs italic">No feedback received yet.</div>}
@@ -279,7 +345,7 @@ export default function PlannerPage() {
 
         {/* COL 2: AI CONTROLS */}
         <div className="space-y-6">
-            <div className="bg-zinc-900/80 border border-white/10 rounded-xl p-5 shadow-lg">
+            <div className="bg-zinc-900/90 border border-white/10 rounded-xl p-5 shadow-lg">
                 <h2 className="text-emerald-400 font-bold text-sm uppercase tracking-wider mb-4">AI Prediction Engine</h2>
                 <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-2">
@@ -320,7 +386,7 @@ export default function PlannerPage() {
                 </div>
             </div>
 
-            <div className="bg-zinc-900/80 border border-white/10 rounded-xl p-5 shadow-lg">
+            <div className="bg-zinc-900/90 border border-white/10 rounded-xl p-5 shadow-lg">
                 <h2 className="text-blue-400 font-bold text-sm uppercase tracking-wider mb-4">Fleet Allocation</h2>
                 <div className="space-y-3">
                     <select value={selectedDriver} onChange={e=>setSelectedDriver(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded p-2 text-xs text-white">
@@ -431,7 +497,7 @@ export default function PlannerPage() {
                   )}
             </div>
 
-            <div className="bg-zinc-900/50 border border-white/5 rounded-xl p-4 flex flex-col h-[150px]">
+            <div className="bg-zinc-900/90 border border-white/5 rounded-xl p-4 flex flex-col h-[150px]">
                 <h4 className="text-zinc-400 font-bold text-xs uppercase tracking-widest mb-2">Decision Log</h4>
                 <div className="overflow-y-auto space-y-1 custom-scrollbar flex-1">
                     {logs.map((log, i) => (
@@ -444,16 +510,18 @@ export default function PlannerPage() {
                 </div>
             </div>
 
-        </div>
-      </div>
-      
-      <style jsx>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #18181b; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
-        .animate-slide-up { animation: slideUp 0.5s ease-out; }
-        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-      `}</style>
-    </div>
-  );
+              </div>   {/* closes grid */}
+
+    </div>   {/* closes relative z-10 wrapper */}
+</div>
+    <style jsx>{`
+      .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: #18181b; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+      .animate-slide-up { animation: slideUp 0.5s ease-out; }
+      @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    `}</style>
+  </div>
+);
+
 }
